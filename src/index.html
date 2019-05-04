@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="center-block">
+    <div class="selector">
+        <input type="text" placeholder="id" id="videoIdInput">
+        <button id="selectButton">Select</button>
+    </div>
+    <div id="player"></div>
+</div>
+<!-- The <iframe> (and video player) will replace this <div> tag. -->
+
+<script>
+    // This code loads the IFrame Player API code asynchronously.
+    let tag = document.createElement('script');
+    tag.src = "https://www.youtube.com/iframe_api";
+    let firstScriptTag = document.getElementsByTagName('script')[0];
+    firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+    let input = document.getElementById('videoIdInput');
+    let selectButton = document.getElementById('selectButton');
+    selectButton.addEventListener('click', () => {
+        const id = input.value;
+        player = undefined;
+        loadVideoById(id);
+        sendEvent({type: 'video', id})
+    });
+
+    let webSocket = new WebSocket('ws://yourip:7777');
+
+    webSocket.onerror = error => {
+        console.log(error);
+    };
+
+    setupEventHandling(webSocket);
+
+    let player;
+    let hasStarted = false;
+    let hasYouTubeIframeAPILoaded = false;
+    let pauseRequested = false;
+    let playingRequested = false;
+
+    function onYouTubeIframeAPIReady() {
+        hasYouTubeIframeAPILoaded = true;
+    }
+
+    function loadVideoById(id) {
+        player = new YT.Player('player', {
+            height: '720',
+            width: '1280',
+            videoId: id,
+            events: {
+                'onReady': event => {
+                    hasStarted = false;
+                    player.playVideo();
+                },
+                'onStateChange': event => {
+                    console.log(event.data);
+                    console.log(YT.PlayerState);
+                    switch (event.data) {
+                        case YT.PlayerState.BUFFERING:
+                        case YT.PlayerState.UNSTARTED:
+                            hasStarted = false;
+                            break;
+                        case YT.PlayerState.PLAYING:
+                            if (!hasStarted) {
+                                player.pauseVideo();
+                                hasStarted = true;
+                            } else if (!playingRequested) {
+                                sendEvent({type: 'play', time: player.getCurrentTime()});
+                            } else {
+                                playingRequested = false;
+                            }
+                            break;
+                        case YT.PlayerState.PAUSED:
+                            if (!pauseRequested) {
+                                sendEvent({type: 'paused', time: player.getCurrentTime()});
+                            } else {
+                                pauseRequested = false;
+                            }
+                            break;
+                    }
+                }
+            }
+        });
+    }
+
+    function sendEvent(event) {
+        webSocket.send(JSON.stringify(event));
+    }
+
+    function setupEventHandling(socket) {
+        socket.onmessage = event => {
+            let data = JSON.parse(event.data || '');
+            switch (data.type) {
+                case 'paused':
+                    pauseRequested = true;
+                    if (player) {
+                        player.pauseVideo();
+                        player.seekTo(data.time);
+                    }
+                    break;
+                case 'play':
+                    if (player) {
+                        playingRequested = true;
+                        player.playVideo();
+                    }
+                    break;
+                case 'video':
+                    if (player) {
+                        player.stopVideo();
+                        player = undefined;
+                    }
+                    loadVideoById(data.id);
+                    break;
+            }
+        };
+    }
+</script>
+</body>
+</html>
